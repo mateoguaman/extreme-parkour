@@ -1,0 +1,45 @@
+use_joystick: true
+device: cpu
+use_real_robot: false
+deployment:
+  use_real_robot: ${use_real_robot}
+  get_commands_from_joystick: ${use_joystick}
+  action_repeat: 10
+  timestep: 0.002
+  reset_time_s: 3.0
+  num_solver_iterations: 9
+  init_position:
+  - 0.0
+  - 0.0
+  - 0.42
+  init_rack_position:
+  - 0.0
+  - 0.0
+  - 1.0
+  init_joint_angles:
+    FL_hip_joint: 0.1
+    RL_hip_joint: 0.1
+    FR_hip_joint: -0.1
+    RR_hip_joint: -0.1
+    FL_thigh_joint: 0.8
+    RL_thigh_joint: 1.0
+    FR_thigh_joint: 0.8
+    RR_thigh_joint: 1.0
+    FL_calf_joint: -1.5
+    RL_calf_joint: -1.5
+    FR_calf_joint: -1.5
+    RR_calf_joint: -1.5
+  stiffness:
+    joint: 40.0
+  damping:
+    joint: 1.0
+  action_scale: 0.25
+  on_rack: false
+  render:
+    show_gui: '${not: ${use_real_robot}}'
+    camera_dist: 1.0
+    camera_yaw: 30.0
+    camera_pitch: -30.0
+    render_width: 480
+    render_height: 360
+    fix_camera_yaw: true

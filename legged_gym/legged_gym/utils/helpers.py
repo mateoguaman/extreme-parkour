@@ -38,6 +38,19 @@ from isaacgym import gymutil
 import argparse
 from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
 
+# If the given path is not absolute (after resolving user parameters), returns an absolute path
+# that is equivalent to the given relative path from the repository root (ground_control).
+def from_repo_root(path):
+    path = os.path.expanduser(path)
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(os.path.join(LEGGED_GYM_ROOT_DIR, path))
+
+# Gets the name of the script that is currently being run (used by Hydra for logging location).
+def get_script_name():
+    return Path(__main__.__file__).stem
+
+
 def class_to_dict(obj) -> dict:
     if not  hasattr(obj,"__dict__"):
         return obj

@@ -67,6 +67,7 @@ class Terrain:
         self.tot_rows = int(cfg.num_rows * self.length_per_env_pixels) + 2 * self.border
 
         self.height_field_raw = np.zeros((self.tot_rows , self.tot_cols), dtype=np.int16)
+        # import pdb;pdb.set_trace()
         if cfg.curriculum:
             self.curiculum()
         elif cfg.selected:

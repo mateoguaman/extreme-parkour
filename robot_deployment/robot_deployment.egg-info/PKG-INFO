@@ -1,0 +1,33 @@
+Metadata-Version: 2.1
+Name: robot-deployment
+Version: 1.0.0
+Summary: Convex MPC controller with python bindings for MPC using the osqp solver
+Home-page: https://github.com/yxyang/fast_and_efficient
+Author: Yuxiang Yang, Tingnan Zhang, Erwin Coumans, Jie Tan, Byron Boots, and Rosario Scalise
+Author-email: yuxiangy@cs.washington.edu
+License: mixed
+Keywords: robotics,control,physics simulation
+Platform: any
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: License :: OSI Approved :: zlib/libpng License
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Operating System :: MacOS
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 2.7
+Classifier: Programming Language :: Python :: 3.4
+Classifier: Programming Language :: Python :: 3.5
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Topic :: Games/Entertainment :: Simulation
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Framework :: Robot Framework
+Requires-Dist: attrs
+Requires-Dist: numpy
+Requires-Dist: filterpy
+Requires-Dist: gymnasium
+Requires-Dist: pybullet
+
+Convex MPC controller with python bindings for MPC using the PyBullet and the OSQP solver
