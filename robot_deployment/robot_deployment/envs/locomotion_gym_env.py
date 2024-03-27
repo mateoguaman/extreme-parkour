@@ -183,6 +183,64 @@ class LocomotionGymEnv(gym.Env):
                 raise ValueError(f"Sensor not recognized: {sensor}")
 
         return np.concatenate(obs_list)
+    
+    ## TODO: Check if needed.
+    def reindex_feet(self, vec):
+        return vec[:, [1, 0, 3, 2]]
+
+    ## TODO: Check if needed.
+    def reindex(self, vec):
+        return vec[:, [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]]
+    
+    def get_observation_parkour(self):
+        obs_list = []
+        for sensor in self.sensors:
+            if sensor == "base_ang_vel":
+                obs_list.append(self.robot.base_angular_velocity_in_base_frame * self.obs_scales.ang_vel)  ## TODO: Verify scale
+            elif sensor == "roll_pitch":
+                obs_list.append(self.robot.base_orientation_rpy[0:2])  ## TODO: Verify that [0:2] are actually roll and pitch; TODO: Verify scale
+            elif sensor == "zerod_delta_yaw":
+                zerod_delta_yaw = np.zeros((1, ))
+                obs_list.append(zerod_delta_yaw)
+            elif sensor == "delta_yaw":
+                delta_yaw = np.zeros((1, ))  ## TODO: Compute this
+                obs_list.append(delta_yaw)
+            elif sensor == "delta_next_yaw":
+                delta_next_yaw = np.zeros((1, ))  ## TODO: Compute this
+                obs_list.append(delta_next_yaw)
+            elif sensor == "zerod_lin_vel_x_lin_vel_y":
+                zerod_lin_vel_x_lin_vel_y = np.zeros((2,))  
+                obs_list.append(zerod_lin_vel_x_lin_vel_y)
+            elif sensor == "lin_vel_x":
+                lin_vel_x = self.robot.base_velocity_in_base_frame[0]
+                obs_list.append(lin_vel_x)  ## TODO: Verify this
+            elif sensor == "not_env_17":
+                not_env_17 = np.ones((1,))
+                obs_list.append(not_env_17)
+            elif sensor == "is_env_17":
+                is_env_17 = np.ones((1,))
+                obs_list.append(is_env_17)
+            elif sensor == "motor_pos":
+                motor_pos_scaled = (self.robot.motor_angles - self.default_motor_angles) * self.obs_scales.dof_pos  ## TODO: Verify scale 
+                obs_list.append(self.reindex(motor_pos_scaled))  ## TODO: Verify reindex
+            elif sensor == "motor_vel":
+                motor_vel_scaled = self.robot.motor_velocities * self.obs_scales.dof_vel  ## TODO: Check scale
+                obs_list.append(self.reindex(motor_vel_scaled))  ## TODO: Verify reindex
+            elif sensor == "last_action":
+                last_action = self.last_action
+                double_reindexed = self.reindex(self.reindex(last_action))
+                obs_list.append((double_reindexed))
+            elif sensor == "contact_filter":
+                contact = self.robot.foot_contacts
+                last_contacts = self.robot.foot_contact_history[-1]  ## TODO: Check that this isn't same as contact
+                contact_filter = np.logical_or(contact, last_contacts).float()
+                shifted_contact_filter = contact_filter - 0.5  ## TODO: Not sure why 0.5
+                obs_list.append(shifted_contact_filter)
+            
+            
+
+
+        return np.concatenate(obs_list)
 
     def get_full_observation(self):
         obs_dict = dict(

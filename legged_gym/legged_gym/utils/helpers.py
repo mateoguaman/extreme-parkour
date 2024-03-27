@@ -37,6 +37,10 @@ from isaacgym import gymapi
 from isaacgym import gymutil
 import argparse
 from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
+from omegaconf import OmegaConf, MISSING
+from dataclasses import fields
+from typing import Type
+from pathlib import Path
 
 # If the given path is not absolute (after resolving user parameters), returns an absolute path
 # that is equivalent to the given relative path from the repository root (ground_control).
@@ -384,3 +388,12 @@ def parse_arguments(description="Isaac Gym Example", headless=False, no_graphics
         args.slices = args.subscenes
 
     return args
+
+# Sets all the fields of a dataclass as OmegaConf.MISSING. Used to specify a config dataclass
+# where fields that are not specified are taken from defaults or an external file.
+def empty_cfg(class_ref: Type):
+    args = {key.name: MISSING for key in fields(class_ref)}
+    def init(**kwargs):
+        args.update(kwargs)
+        return class_ref(**args)
+    return init

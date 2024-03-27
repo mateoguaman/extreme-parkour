@@ -83,7 +83,6 @@ class PPO:
                  **kwargs
                  ):
 
-        
         self.device = device
 
         self.desired_kl = desired_kl

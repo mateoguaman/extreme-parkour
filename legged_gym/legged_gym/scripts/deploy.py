@@ -11,20 +11,20 @@ from omegaconf import OmegaConf, MISSING
 
 from configs.hydra import ExperimentHydraConfig
 from configs.definitions import (EnvConfig, TaskConfig, TrainConfig, ObservationConfig,
-                                 SimConfig, RunnerConfig, TerrainConfig)
+                                 SimConfig, RunnerConfig, TerrainConfig, NormalizationConfig)
 from configs.definitions import DeploymentConfig
 from configs.overrides.domain_rand import NoDomainRandConfig
 from configs.overrides.noise import NoNoiseConfig
 # from legged_gym.envs.a1 import A1
 # from legged_gym.utils.observation_buffer import ObservationBuffer
-# from legged_gym.utils.helpers import (export_policy_as_jit, get_load_path, get_latest_experiment_path,
-#                                       empty_cfg, from_repo_root, save_config_as_yaml)
+from legged_gym.utils.helpers import update_cfg_from_args
 # from rsl_rl.runners import OnPolicyRunner
 from robot_deployment.envs.locomotion_gym_env import LocomotionGymEnv
 import torch
+import os
 
 # from legged_gym.utils.task_registry import task_registry
-from legged_gym.utils.helpers import get_args, class_to_dict
+from legged_gym.utils.helpers import get_args, class_to_dict, empty_cfg
 
 from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
 from legged_gym.envs.a1.a1_config import A1RoughCfg, A1RoughCfgPPO
@@ -66,34 +66,61 @@ class DeployScriptConfig:
 
     # hydra: ExperimentHydraConfig = ExperimentHydraConfig()
 
-    # task: TaskConfig = empty_cfg(TaskConfig)(
-    #     env = empty_cfg(EnvConfig)(
-    #         num_envs = "${num_envs}"
-    #     ),
-    #     observation = empty_cfg(ObservationConfig)(
-    #         get_commands_from_joystick = "${use_joystick}"
-    #     ),
-    #     sim = empty_cfg(SimConfig)(
-    #         device = "${device}",
-    #         use_gpu_pipeline = "${evaluate_use_gpu: ${task.sim.device}}",
-    #         headless = True, # meaning Isaac is headless, but not the target for deployment 
-    #         physx = empty_cfg(SimConfig.PhysxConfig)(
-    #             use_gpu = "${evaluate_use_gpu: ${task.sim.device}}"
-    #         )
-    #     ),
-    #     terrain = empty_cfg(TerrainConfig)(
-    #         curriculum = False
-    #     ),
-    #     noise = NoNoiseConfig(),
-    #     domain_rand = NoDomainRandConfig()
-    # ) 
-    # train: TrainConfig = empty_cfg(TrainConfig)(
-    #     device = "${device}",
-    #     log_dir = "${hydra:runtime.output_dir}",
-    #     runner = empty_cfg(RunnerConfig)(
-    #         checkpoint="${checkpoint}"
-    #     )
-    # )
+    task: TaskConfig = empty_cfg(TaskConfig)(
+        env = empty_cfg(EnvConfig)(
+            num_envs = "${num_envs}"
+        ),
+        observation = empty_cfg(ObservationConfig)(
+            get_commands_from_joystick = "${use_joystick}",
+            sensor_names = ("base_ang_vel",
+                            "roll_pitch",
+                            "zerod_delta_yaw",
+                            "delta_yaw",
+                            "delta_next_yaw",
+                            "zerod_lin_vel_x_lin_vel_y",
+                            "lin_vel_x",
+                            "not_env_17",
+                            "is_env_17",
+                            "motor_pos",
+                            "motor_vel",
+                            "last_action",
+                            "contact_filter"),
+        ),
+        normalization = empty_cfg(NormalizationConfig)(
+            obs_scales = empty_cfg(NormalizationConfig.NormalizationObsScalesConfig)(
+                lin_vel = 1.,
+                ang_vel = 1.,
+                dof_pos = 1.,
+                dof_vel = 1.,
+                height_measurements = 1.,
+                last_action = 1.,
+                base_mass = 1.,
+                stiffness = 1.,
+                damping = 1.,
+                base_quat = 1.
+            )
+        )
+        sim = empty_cfg(SimConfig)(
+            device = "${device}",
+            use_gpu_pipeline = "${evaluate_use_gpu: ${task.sim.device}}",
+            headless = True, # meaning Isaac is headless, but not the target for deployment 
+            physx = empty_cfg(SimConfig.PhysxConfig)(
+                use_gpu = "${evaluate_use_gpu: ${task.sim.device}}"
+            )
+        ),
+        terrain = empty_cfg(TerrainConfig)(
+            curriculum = False
+        ),
+        noise = NoNoiseConfig(),
+        domain_rand = NoDomainRandConfig()
+    ) 
+    train: TrainConfig = empty_cfg(TrainConfig)(
+        device = "${device}",
+        log_dir = "${hydra:runtime.output_dir}",
+        runner = empty_cfg(RunnerConfig)(
+            checkpoint="${checkpoint}"
+        )
+    )
     deployment: DeploymentConfig = DeploymentConfig(
         use_real_robot="${use_real_robot}",
         get_commands_from_joystick="${use_joystick}",
@@ -111,6 +138,15 @@ class DeployScriptConfig:
 
 cs = ConfigStore.instance()
 cs.store(name="config", node=DeployScriptConfig)
+
+def get_load_path(root, load_run=-1, checkpoint=-1, model_name_include="model"):
+    if checkpoint==-1:
+        models = [file for file in os.listdir(root) if model_name_include in file]
+        models.sort(key=lambda m: '{0:0>15}'.format(m))
+        model = models[-1]
+        checkpoint = model.split("_")[-1].split(".")[0]
+    return model, checkpoint
+
 
 @hydra.main(version_base=None, config_name="config")
 def main(cfg: DeployScriptConfig):
@@ -147,41 +183,66 @@ def main(cfg: DeployScriptConfig):
     ## Mateo: THE MESS STARTS HERE
     # env, env_cfg = task_registry.make_env(name=args.task, args=args)
     args = get_args()
+    # dict_args = vars(args)
+    args.use_camera = True
+    args.delay = True
     import os
     LEGGED_GYM_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     LEGGED_GYM_ENVS_DIR = os.path.join(LEGGED_GYM_ROOT_DIR, 'legged_gym', 'envs')
-    args.exptid = "001-00"
+    args.exptid = "001-01"
     log_pth = LEGGED_GYM_ROOT_DIR + "/logs/{}/".format(args.proj_name) + args.exptid
-    # import ipdb;ipdb.set_trace()
     env_cfg = A1ParkourCfg()
     train_cfg = A1ParkourCfgPPO()
+    env_cfg, train_cfg = update_cfg_from_args(env_cfg, train_cfg, args)
+    # load policy
+    train_cfg.runner.resume = True
     train_cfg_dict = class_to_dict(train_cfg)
     runner = DeployOnPolicyRunner(env_cfg, 
                             train_cfg_dict, 
                             "./", 
                             init_wandb=True,
                             device=args.rl_device)
+    import ipdb;ipdb.set_trace()
+    # load previously trained model
+    print(log_pth)
+    print(train_cfg.runner.load_run)
+    # resume_path = get_load_path(log_pth, load_run=train_cfg.runner.load_run, checkpoint=train_cfg.runner.checkpoint)
+    resume_path = "/home/mateo/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
+    runner.load(resume_path)
+    if not train_cfg.policy.continue_from_last_std:
+        runner.alg.actor_critic.reset_std(train_cfg.policy.init_noise_std, 12, device=runner.device)
+    
+    if args.use_jit:
+        path = os.path.join(log_pth, "traced")
+        model, checkpoint = get_load_path(root=path, checkpoint=args.checkpoint)
+        # path = os.path.join(path, model)
+        path = "/home/mateo/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
+        print("Loading jit for policy: ", path)
+        policy_jit = torch.jit.load(path, map_location=cfg.device)
+    else:
+        policy = runner.get_inference_policy(device=cfg.device)
+
+
     # ppo_runner, train_cfg = task_registry.make_alg_runner(log_root = log_pth, env_cfg=env_cfg, name=args.task, args=args)
     # sim_params = 
     # env = LeggedRobot(A1ParkourCfg, sim_params=sim_params,
     #                         physics_engine=args.physics_engine,
     #                         sim_device=args.sim_device,
     #                         headless=args.headless))
-    import ipdb;ipdb.set_trace()
 
     
     # runner: OnPolicyRunner = hydra.utils.instantiate(cfg.train, env=isaac_env, _recursive_=False)
     # runner = OnPolicyRunner()
 
-    experiment_path = get_latest_experiment_path(cfg.checkpoint_root)
-    resume_path = get_load_path(experiment_path, checkpoint=cfg.train.runner.checkpoint)
-    log.info(f"5. Loading policy checkpoint from: {resume_path}.")
-    runner.load(resume_path)
-    policy = runner.get_inference_policy(device=isaac_env.device)
+    # experiment_path = get_latest_experiment_path(cfg.checkpoint_root)
+    # resume_path = get_load_path(experiment_path, checkpoint=cfg.train.runner.checkpoint)
+    # log.info(f"5. Loading policy checkpoint from: {resume_path}.")
+    # runner.load(resume_path)
+    # policy = runner.get_inference_policy(device=isaac_env.device)
 
-    if cfg.export_policy:
-        export_policy_as_jit(runner.alg.actor_critic, cfg.checkpoint_root)
-        log.info(f"Exported policy as jit script to: {cfg.checkpoint_root}")
+    # if cfg.export_policy:
+    #     export_policy_as_jit(runner.alg.actor_critic, cfg.checkpoint_root)
+    #     log.info(f"Exported policy as jit script to: {cfg.checkpoint_root}")
 
     log.info(f"6. Instantiating robot deployment environment.")
     # create robot environment (either in PyBullet or real world)
@@ -192,6 +253,7 @@ def main(cfg: DeployScriptConfig):
         cfg.task.commands.ranges
     )
 
+    import ipdb;ipdb.set_trace()
     obs, info = deploy_env.reset()
     for _ in range(1):
         obs, *_, info = deploy_env.step(deploy_env.default_motor_angles)
