@@ -83,8 +83,8 @@ class LocomotionGymEnv(gym.Env):
             self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_RENDERING, 1)
 
         self.current_time = time.time()
-        return self.get_observation(), self.get_full_observation()
-
+        # return self.get_observation(), self.get_full_observation()
+        return self.get_observation_parkour(), self.get_full_observation()
     def step(self, action):
         """Step forward the environment, given the action.
 
@@ -120,7 +120,8 @@ class LocomotionGymEnv(gym.Env):
         terminated = not self.is_safe
         self.last_action = clipped_action
         self.timesteps += 1
-        return self.get_observation(), 0, terminated, False, self.get_full_observation()
+        # return self.get_observation(), 0, terminated, False, self.get_full_observation()
+        return self.get_observation_parkour(), 0, terminated, False, self.get_full_observation()
 
     def render(self):
         view_matrix = self.pybullet_client.computeViewMatrixFromYawPitchRoll(
@@ -186,11 +187,13 @@ class LocomotionGymEnv(gym.Env):
     
     ## TODO: Check if needed.
     def reindex_feet(self, vec):
-        return vec[:, [1, 0, 3, 2]]
+        return vec[np.array([1, 0, 3, 2])]
+        # return vec[:, [1, 0, 3, 2]]
 
     ## TODO: Check if needed.
     def reindex(self, vec):
-        return vec[:, [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]]
+        return vec[np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8])]
+        # return vec[:, [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]]
     
     def get_observation_parkour(self):
         obs_list = []
@@ -212,7 +215,7 @@ class LocomotionGymEnv(gym.Env):
                 zerod_lin_vel_x_lin_vel_y = np.zeros((2,))  
                 obs_list.append(zerod_lin_vel_x_lin_vel_y)
             elif sensor == "lin_vel_x":
-                lin_vel_x = self.robot.base_velocity_in_base_frame[0]
+                lin_vel_x = self.robot.base_velocity_in_base_frame[[0]]  ## TODO: Check this value, starts with pi/2
                 obs_list.append(lin_vel_x)  ## TODO: Verify this
             elif sensor == "not_env_17":
                 not_env_17 = np.ones((1,))
@@ -232,14 +235,13 @@ class LocomotionGymEnv(gym.Env):
                 obs_list.append((double_reindexed))
             elif sensor == "contact_filter":
                 contact = self.robot.foot_contacts
-                last_contacts = self.robot.foot_contact_history[-1]  ## TODO: Check that this isn't same as contact
-                contact_filter = np.logical_or(contact, last_contacts).float()
+                last_contacts = self.robot.last_foot_contacts #self.robot.foot_contact_history[-1]  ## TODO: Check that this isn't same as contact
+                contact_filter = np.logical_or(contact, last_contacts).astype(float)
                 shifted_contact_filter = contact_filter - 0.5  ## TODO: Not sure why 0.5
                 obs_list.append(shifted_contact_filter)
             
             
-
-
+    
         return np.concatenate(obs_list)
 
     def get_full_observation(self):

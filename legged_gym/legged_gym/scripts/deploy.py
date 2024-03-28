@@ -11,12 +11,13 @@ from omegaconf import OmegaConf, MISSING
 
 from configs.hydra import ExperimentHydraConfig
 from configs.definitions import (EnvConfig, TaskConfig, TrainConfig, ObservationConfig,
-                                 SimConfig, RunnerConfig, TerrainConfig, NormalizationConfig)
+                                 SimConfig, RunnerConfig, TerrainConfig, NormalizationConfig,
+                                 CommandsConfig)
 from configs.definitions import DeploymentConfig
 from configs.overrides.domain_rand import NoDomainRandConfig
 from configs.overrides.noise import NoNoiseConfig
 # from legged_gym.envs.a1 import A1
-# from legged_gym.utils.observation_buffer import ObservationBuffer
+from legged_gym.utils.observation_buffer import ObservationBuffer
 from legged_gym.utils.helpers import update_cfg_from_args
 # from rsl_rl.runners import OnPolicyRunner
 from robot_deployment.envs.locomotion_gym_env import LocomotionGymEnv
@@ -36,22 +37,40 @@ from rsl_rl.runners.deploy_on_policy_runner import DeployOnPolicyRunner
 # OmegaConf.register_new_resolver("not", lambda b: not b)
 # OmegaConf.register_new_resolver("compute_timestep", lambda dt, decimation, action_repeat: dt * decimation / action_repeat)
 
-INIT_JOINT_ANGLES = { # = target angles [rad] when action = 0.0
-            'FL_hip_joint': 0.1,   # [rad]
-            'RL_hip_joint': 0.1,   # [rad]
-            'FR_hip_joint': -0.1 ,  # [rad]
-            'RR_hip_joint': -0.1,   # [rad]
+# INIT_JOINT_ANGLES = { # = target angles [rad] when action = 0.0
+#             'FL_hip_joint': 0.1,   # [rad]
+#             'RL_hip_joint': 0.1,   # [rad]
+#             'FR_hip_joint': -0.1 ,  # [rad]
+#             'RR_hip_joint': -0.1,   # [rad]
 
-            'FL_thigh_joint': 0.8,     # [rad]
-            'RL_thigh_joint': 1.,   # [rad]
-            'FR_thigh_joint': 0.8,     # [rad]
-            'RR_thigh_joint': 1.,   # [rad]
+#             'FL_thigh_joint': 0.8,     # [rad]
+#             'RL_thigh_joint': 1.,   # [rad]
+#             'FR_thigh_joint': 0.8,     # [rad]
+#             'RR_thigh_joint': 1.,   # [rad]
 
-            'FL_calf_joint': -1.5,   # [rad]
-            'RL_calf_joint': -1.5,    # [rad]
-            'FR_calf_joint': -1.5,  # [rad]
-            'RR_calf_joint': -1.5,    # [rad]
-        }
+#             'FL_calf_joint': -1.5,   # [rad]
+#             'RL_calf_joint': -1.5,    # [rad]
+#             'FR_calf_joint': -1.5,  # [rad]
+#             'RR_calf_joint': -1.5,    # [rad]
+#         }  ## TODO: Where did these come from?
+
+INIT_JOINT_ANGLES = {
+    "1_FR_hip_joint": 0.,
+    "1_FR_thigh_joint": 0.9,
+    "1_FR_calf_joint": -1.8,
+
+    "2_FL_hip_joint": 0.,
+    "2_FL_thigh_joint": 0.9,
+    "2_FL_calf_joint": -1.8,
+
+    "3_RR_hip_joint": 0.,
+    "3_RR_thigh_joint": 0.9,
+    "3_RR_calf_joint": -1.8,
+
+    "4_RL_hip_joint": 0.,
+    "4_RL_thigh_joint": 0.9,
+    "4_RL_calf_joint": -1.8
+}
 
 @dataclass
 class DeployScriptConfig:
@@ -72,7 +91,7 @@ class DeployScriptConfig:
         ),
         observation = empty_cfg(ObservationConfig)(
             get_commands_from_joystick = "${use_joystick}",
-            sensor_names = ("base_ang_vel",
+            sensors = ("base_ang_vel",
                             "roll_pitch",
                             "zerod_delta_yaw",
                             "delta_yaw",
@@ -85,21 +104,32 @@ class DeployScriptConfig:
                             "motor_vel",
                             "last_action",
                             "contact_filter"),
+            history_steps=1,
         ),
         normalization = empty_cfg(NormalizationConfig)(
             obs_scales = empty_cfg(NormalizationConfig.NormalizationObsScalesConfig)(
-                lin_vel = 1.,
-                ang_vel = 1.,
-                dof_pos = 1.,
-                dof_vel = 1.,
-                height_measurements = 1.,
+                lin_vel = 2.0,
+                ang_vel = 0.25,
+                dof_pos = 1.0,
+                dof_vel = 0.05,
+                height_measurements = 5.,
                 last_action = 1.,
                 base_mass = 1.,
                 stiffness = 1.,
                 damping = 1.,
                 base_quat = 1.
+            ),
+            clip_observations = 100.,
+            clip_actions = 1.2
+        ),
+        commands = empty_cfg(CommandsConfig)(
+            ranges = empty_cfg(CommandsConfig.CommandRangesConfig)(
+                lin_vel_x = [0.3, 0.8],
+                lin_vel_y = [-0.3, 0.3],
+                ang_vel_yaw = [-0,0],
+                heading = [-1.6, 1.6]
             )
-        )
+        ),
         sim = empty_cfg(SimConfig)(
             device = "${device}",
             use_gpu_pipeline = "${evaluate_use_gpu: ${task.sim.device}}",
@@ -125,7 +155,7 @@ class DeployScriptConfig:
         use_real_robot="${use_real_robot}",
         get_commands_from_joystick="${use_joystick}",
         render=DeploymentConfig.RenderConfig(
-            show_gui="${not: ${use_real_robot}}"
+            show_gui=True #"${not: ${use_real_robot}}"
         ),
         # timestep="${compute_timestep: ${task.sim.dt}, ${task.control.decimation}, ${deployment.action_repeat}}",
         timestep=0.002, #TODO: should also try 0.0004 w dt=0.001. their dt 0.005, decimation=4, unknown action_repeat (we assume it's 10 form our code), and the formuoli we use is dt*decimation/action_repeat
@@ -186,6 +216,7 @@ def main(cfg: DeployScriptConfig):
     # dict_args = vars(args)
     args.use_camera = True
     args.delay = True
+    args.use_jit = False  ## TODO: Change later
     import os
     LEGGED_GYM_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     LEGGED_GYM_ENVS_DIR = os.path.join(LEGGED_GYM_ROOT_DIR, 'legged_gym', 'envs')
@@ -202,12 +233,12 @@ def main(cfg: DeployScriptConfig):
                             "./", 
                             init_wandb=True,
                             device=args.rl_device)
-    import ipdb;ipdb.set_trace()
+    
     # load previously trained model
     print(log_pth)
     print(train_cfg.runner.load_run)
     # resume_path = get_load_path(log_pth, load_run=train_cfg.runner.load_run, checkpoint=train_cfg.runner.checkpoint)
-    resume_path = "/home/mateo/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
+    resume_path = "/home/rll/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
     runner.load(resume_path)
     if not train_cfg.policy.continue_from_last_std:
         runner.alg.actor_critic.reset_std(train_cfg.policy.init_noise_std, 12, device=runner.device)
@@ -216,13 +247,13 @@ def main(cfg: DeployScriptConfig):
         path = os.path.join(log_pth, "traced")
         model, checkpoint = get_load_path(root=path, checkpoint=args.checkpoint)
         # path = os.path.join(path, model)
-        path = "/home/mateo/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
+        path = "/home/rll/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
         print("Loading jit for policy: ", path)
         policy_jit = torch.jit.load(path, map_location=cfg.device)
     else:
         policy = runner.get_inference_policy(device=cfg.device)
 
-
+    
     # ppo_runner, train_cfg = task_registry.make_alg_runner(log_root = log_pth, env_cfg=env_cfg, name=args.task, args=args)
     # sim_params = 
     # env = LeggedRobot(A1ParkourCfg, sim_params=sim_params,
@@ -253,12 +284,12 @@ def main(cfg: DeployScriptConfig):
         cfg.task.commands.ranges
     )
 
-    import ipdb;ipdb.set_trace()
     obs, info = deploy_env.reset()
     for _ in range(1):
         obs, *_, info = deploy_env.step(deploy_env.default_motor_angles)
 
-    obs_buf = ObservationBuffer(1, isaac_env.num_obs, task_cfg.observation.history_steps, runner.device)
+    import ipdb;ipdb.set_trace()
+    obs_buf = ObservationBuffer(1, env_cfg.num_observations, cfg.task.observation.history_steps, runner.device) 
 
     all_actions = []
     all_infos = None
@@ -268,18 +299,18 @@ def main(cfg: DeployScriptConfig):
         # Form observation for policy.
         obs = torch.tensor(obs, device=runner.device).float()
         if t == 0:
-            obs_buf.reset([0], obs)
+            obs_buf.reset([0], obs) 
             all_infos = {k: [v.copy()] for k, v in info.items()}
         else:
             obs_buf.insert(obs)
             for k, v in info.items():
                 all_infos[k].append(v.copy())
 
-        policy_obs = obs_buf.get_obs_vec(range(task_cfg.observation.history_steps))
+        policy_obs = obs_buf.get_obs_vec(range(cfg.task.observation.history_steps))
 
         # Evaluate policy and act.
         actions = policy(policy_obs.detach()).detach().cpu().numpy().squeeze()
-        actions = task_cfg.control.action_scale*actions + deploy_env.default_motor_angles
+        actions = cfg.task.control.action_scale*actions + deploy_env.default_motor_angles
         all_actions.append(actions)
         obs, _, terminated, _, info = deploy_env.step(actions)
 
@@ -288,7 +319,6 @@ def main(cfg: DeployScriptConfig):
             break
 
     log.info("8. Exit Cleanly")
-    isaac_env.exit()
     # TODO: check if target simulator (pybullet or other) has exit logic
 
 

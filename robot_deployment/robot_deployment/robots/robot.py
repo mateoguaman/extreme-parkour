@@ -57,6 +57,8 @@ class Robot:
     self._foot_contact_history = self.foot_positions_in_base_frame.copy()
     self._foot_contact_history[:, 2] = -self.mpc_body_height
     self._last_timestamp = 0
+    self._last_contacts = [True, True, True, True]
+    self._feet_contacts = [True, True, True, True]
 
     #self.reset()
 
@@ -195,6 +197,7 @@ class Robot:
     rot_mat = np.array(rot_mat).reshape((3, 3))
     base_vel_body_frame = rot_mat.T.dot(self.base_velocity)
 
+    self._last_contacts = self.foot_contacts.copy()
     foot_contacts = self.foot_contacts.copy()
     foot_positions = self.foot_positions_in_base_frame.copy()
     for leg_id in range(4):
@@ -225,6 +228,10 @@ class Robot:
       except ValueError:
         continue
     return np.array(contacts)
+  
+  @property
+  def last_foot_contacts(self):
+    return self._last_contacts
 
   @property
   def base_position(self):
