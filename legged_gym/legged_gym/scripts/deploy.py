@@ -238,7 +238,7 @@ def main(cfg: DeployScriptConfig):
     print(log_pth)
     print(train_cfg.runner.load_run)
     # resume_path = get_load_path(log_pth, load_run=train_cfg.runner.load_run, checkpoint=train_cfg.runner.checkpoint)
-    resume_path = "/home/rll/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
+    resume_path = "/home/mateo/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
     runner.load(resume_path)
     if not train_cfg.policy.continue_from_last_std:
         runner.alg.actor_critic.reset_std(train_cfg.policy.init_noise_std, 12, device=runner.device)
@@ -247,7 +247,7 @@ def main(cfg: DeployScriptConfig):
         path = os.path.join(log_pth, "traced")
         model, checkpoint = get_load_path(root=path, checkpoint=args.checkpoint)
         # path = os.path.join(path, model)
-        path = "/home/rll/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
+        path = "/home/mateo/projects/extreme-parkour/legged_gym/logs/parkour_new/001-01-distill/model_9500.pt"
         print("Loading jit for policy: ", path)
         policy_jit = torch.jit.load(path, map_location=cfg.device)
     else:

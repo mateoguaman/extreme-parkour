@@ -97,9 +97,9 @@ def play(args):
     env_cfg.terrain.curriculum = False
     env_cfg.terrain.max_difficulty = True
     
-    env_cfg.depth.angle = [0, 1]
-    env_cfg.noise.add_noise = True
-    env_cfg.domain_rand.randomize_friction = True
+    env_cfg.depth.angle = [0, 1]  ## Mateo: Unsure what this depth.angle thing means or does here
+    env_cfg.noise.add_noise = True  ## Mateo: Unsure why we have add_noise in play
+    env_cfg.domain_rand.randomize_friction = True  ## Mateo: Unsure why we randomize friction in play
     env_cfg.domain_rand.push_robots = False
     env_cfg.domain_rand.push_interval_s = 6
     env_cfg.domain_rand.randomize_base_mass = False
@@ -109,7 +109,7 @@ def play(args):
     # prepare environment
     env: LeggedRobot
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
-    obs = env.get_observations()
+    obs = env.get_observations()  ## Mateo: TODO: Check dimensionality of observations
 
     if args.web:
         web_viewer.setup(env)
@@ -118,49 +118,49 @@ def play(args):
     train_cfg.runner.resume = True
     ppo_runner, train_cfg, log_pth = task_registry.make_alg_runner(log_root = log_pth, env=env, name=args.task, args=args, train_cfg=train_cfg, return_log_dir=True)
     
-    if args.use_jit:
+    if args.use_jit:  ## Mateo: For now I think we can assume we use a jitted policy, TODO: verify if this is True
         path = os.path.join(log_pth, "traced")
         model, checkpoint = get_load_path(root=path, checkpoint=args.checkpoint)
         path = os.path.join(path, model)
         print("Loading jit for policy: ", path)
-        policy_jit = torch.jit.load(path, map_location=env.device)
+        policy_jit = torch.jit.load(path, map_location=env.device) ## Mateo: TODO: Check what type of network this is
     else:
-        policy = ppo_runner.get_inference_policy(device=env.device)
-    estimator = ppo_runner.get_estimator_inference_policy(device=env.device)
-    if env.cfg.depth.use_camera:
-        depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)
+        policy = ppo_runner.get_inference_policy(device=env.device)  ## Mateo: Seems like it doesn't really load a policy unless it's jitted, which is odd. Maybe this branch of the code is incomplete.  ## Mateo: TODO: Check what type of network this is
+    estimator = ppo_runner.get_estimator_inference_policy(device=env.device)  ## Mateo: Seems like there is an estimator that gets loaded 
+    if env.cfg.depth.use_camera:  ## Mateo: This should be true in our case
+        depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)  ## Mateo: TODO: Check what type of network this is 
 
     actions = torch.zeros(env.num_envs, 12, device=env.device, requires_grad=False)
     infos = {}
-    infos["depth"] = env.depth_buffer.clone().to(ppo_runner.device)[:, -1] if ppo_runner.if_depth else None
+    infos["depth"] = env.depth_buffer.clone().to(ppo_runner.device)[:, -1] if ppo_runner.if_depth else None  ## MEGA TODO: Check what this dimensionality is. I don't like that this is stored in infos instead of observations, and we should change that, but that might require serializing the depth image to be 1D so it can be concatenated with other states.
 
-    for i in range(10*int(env.max_episode_length)):
-        if args.use_jit:
-            if env.cfg.depth.use_camera:
+    for i in range(10*int(env.max_episode_length)):  ## Mateo: Why is there a 10*max_episode_length here. Is it because they consider histories of 10 observations at a time? Unclear.
+        if args.use_jit:  ## ## Mateo: TODO: Check that this is true
+            if env.cfg.depth.use_camera:  ## Mateo: TODO: Check that this is true
                 if infos["depth"] is not None:
-                    depth_latent = torch.ones((env_cfg.env.num_envs, 32), device=env.device)
-                    actions, depth_latent = policy_jit(obs.detach(), True, infos["depth"], depth_latent)
+                    depth_latent = torch.ones((env_cfg.env.num_envs, 32), device=env.device)  ## Mateo: TODO: The depth latent is always an array of ones here. This makes no sense. Check what this is supposed to be
+                    actions, depth_latent = policy_jit(obs.detach(), True, infos["depth"], depth_latent)  ## Mateo: TODO: Check what type of network this is, and what are the four inputs that it allows. 
                 else:
-                    depth_buffer = torch.ones((env_cfg.env.num_envs, 58, 87), device=env.device)
+                    depth_buffer = torch.ones((env_cfg.env.num_envs, 58, 87), device=env.device)  ## Mateo: This is saying that if there is no depth image in the observation, you pass a 2D array of size (58, 87) into the network. Notably, the second argument is False instead of True, and the depth_latent that doesn't seem like it's actually set anywhere before this, so SHOULD break.
                     actions, depth_latent = policy_jit(obs.detach(), False, depth_buffer, depth_latent)
             else:
-                obs_jit = torch.cat((obs.detach()[:, :env_cfg.env.n_proprio+env_cfg.env.n_priv], obs.detach()[:, -env_cfg.env.history_len*env_cfg.env.n_proprio:]), dim=1)
-                actions = policy(obs_jit)
-        else:
+                obs_jit = torch.cat((obs.detach()[:, :env_cfg.env.n_proprio+env_cfg.env.n_priv], obs.detach()[:, -env_cfg.env.history_len*env_cfg.env.n_proprio:]), dim=1)  ## Mateo: TODO: Check what happens if you don't pass the camera. Seems like you remove some of the observations in the middle
+                actions = policy(obs_jit)  ## Mateo: Note that policy and policy_jit seem to be different functions. policy() of them only takes one parameter as input, while policy_jit seems to take 4. This suggests that policy may only be used during training, and policy_jit may be used during play/deployment
+        else:  ## Mateo: If not using jit, which I'm not sure when this is true but seems to actually correspond to different logic
             if env.cfg.depth.use_camera:
-                if infos["depth"] is not None:
-                    obs_student = obs[:, :env.cfg.env.n_proprio].clone()
-                    obs_student[:, 6:8] = 0
-                    depth_latent_and_yaw = depth_encoder(infos["depth"], obs_student)
-                    depth_latent = depth_latent_and_yaw[:, :-2]
+                if infos["depth"] is not None:  ## Mateo: So if not jit, using camera, and a depth image exists
+                    obs_student = obs[:, :env.cfg.env.n_proprio].clone()  ## Mateo: Seems to be copying the proprioception info into obs_student
+                    obs_student[:, 6:8] = 0  ## Mateo: They're manually zeroing out 1 of the fields TODO: Check which. This is so hacky. Seems to be yaw based on line 157.
+                    depth_latent_and_yaw = depth_encoder(infos["depth"], obs_student)  ## Mateo: They extract a depth latent and yaw by passing a depth image and the extracted proprioception observation into the depth encoder network
+                    depth_latent = depth_latent_and_yaw[:, :-2] ## Mateo: Split up depth_latent and yaw
                     yaw = depth_latent_and_yaw[:, -2:]
-                obs[:, 6:8] = 1.5*yaw
+                obs[:, 6:8] = 1.5*yaw  ## Mateo: Similar as in line 142, they don't have yaw defined outside the if statement above, so this should only work if there IS a valid depth image. I'm assuming that if not, they want to re=use the value from the last time you got a valid image, so there may be a condition above that only runs if there's at least one depth image.
                     
             else:
                 depth_latent = None
             
-            if hasattr(ppo_runner.alg, "depth_actor"):
-                actions = ppo_runner.alg.depth_actor(obs.detach(), hist_encoding=True, scandots_latent=depth_latent)
+            if hasattr(ppo_runner.alg, "depth_actor"):  ## Mateo: TODO: When is this true? Probably after the distillation step, so during play and deployment. Check that this is true during play.
+                actions = ppo_runner.alg.depth_actor(obs.detach(), hist_encoding=True, scandots_latent=depth_latent)  ## Mateo: Get actions from the depth_actor rather than from the "policy."  
             else:
                 actions = policy(obs.detach(), hist_encoding=True, scandots_latent=depth_latent)
 
