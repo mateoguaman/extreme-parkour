@@ -281,7 +281,8 @@ def main(cfg: DeployScriptConfig):
         cfg.deployment,
         cfg.task.observation.sensors,
         cfg.task.normalization.obs_scales,
-        cfg.task.commands.ranges
+        cfg.task.commands.ranges,
+        cfg.task.observation.history_steps
     )
 
     obs, info = deploy_env.reset()

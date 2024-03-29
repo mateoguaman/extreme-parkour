@@ -28,7 +28,8 @@ class LocomotionGymEnv(gym.Env):
         config: DeploymentConfig,
         sensors: Tuple[str, ...],
         obs_scales: NormalizationConfig.NormalizationObsScalesConfig,
-        command_ranges: CommandsConfig.CommandRangesConfig
+        command_ranges: CommandsConfig.CommandRangesConfig,
+        history_length: int = 1
     ):
         # set instance variables from arguments
         self.config = config
@@ -40,6 +41,13 @@ class LocomotionGymEnv(gym.Env):
         self.hard_reset = True
         self.last_frame_time = 0.
         self.env_time_step = self.config.timestep * self.config.action_repeat
+        ## Mateo: Need to put this into a config eventually
+        self.history_length = history_length  ## Should be 10
+        self.n_proprio = 53
+        self.n_priv_explicit = 9
+        self.n_priv_latent = 29
+        self.n_scan = 132
+        ## End Mateo block
 
         self._setup_robot()
         self.default_motor_angles = self.robot.motor_group.init_positions
@@ -81,7 +89,8 @@ class LocomotionGymEnv(gym.Env):
         self.timesteps = 0
         if self.config.render.show_gui and not self.use_real_robot:
             self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_RENDERING, 1)
-
+        ## Mateo: TODO: need to populate this proprioceptive history 
+        self.proprio_history = np.zeros((self.history_length, self.n_proprio))
         self.current_time = time.time()
         # return self.get_observation(), self.get_full_observation()
         return self.get_observation_parkour(), self.get_full_observation()
@@ -196,6 +205,10 @@ class LocomotionGymEnv(gym.Env):
         # return vec[:, [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]]
     
     def get_observation_parkour(self):
+        ## TODO: Change so that it calls get_proprioceptive_history(), get_privileged_explicit_observation(), etc. and concatenate everything here to get a 753-dimensional observation
+        return None
+    
+    def get_proprioceptive_observation(self):
         obs_list = []
         for sensor in self.sensors:
             if sensor == "base_ang_vel":
@@ -239,10 +252,42 @@ class LocomotionGymEnv(gym.Env):
                 contact_filter = np.logical_or(contact, last_contacts).astype(float)
                 shifted_contact_filter = contact_filter - 0.5  ## TODO: Not sure why 0.5
                 obs_list.append(shifted_contact_filter)
-            
-            
     
-        return np.concatenate(obs_list)
+        concatenated = np.concatenate(obs_list)
+        assert concatenated.shape[0] == self.n_proprio, "Proprioceptive observation is not the right shape"
+        
+        return concatenated
+    
+    def get_privileged_explicit_observation(self):
+        obs_list = [
+            self.robot.base_velocity * self.obs_scales.lin_vel,  ## TODO: Check if it should be base_velocity one or base_velocity_in_base_frame
+            0*self.robot.base_velocity,  ## This is zerod out like they do in their codebase
+            0*self.robot.base_velocity,  ## This is zerod out like they do in their codebase
+        ]
+
+        concatenated = np.concatenate(obs_list)
+        assert concatenated.shape[0] == self.n_priv_explicit, "Privileged explicit observation is not the right shape"
+
+        return concatenated
+    
+    def get_privileged_latent_observation(self):
+        motor_strength_range = [0.8, 1.2]
+        motor_strength = (motor_strength_range[1] - motor_strength_range[0]) * np.random.rand(2, 12) + motor_strength_range[0]
+        
+        obs_list = [
+            np.zeros(4,),  ## This is "mass params", which corresponds to [added_randomized_mass, added_center_of_mass_pos_x_shift, added_center_of_mass_pos_y_shift, added_center_of_mass_pos_z_shift]. Zero'd out in play.py in extreme-parkour since rand_mass and rand_com are False.
+            np.random.rand(1),  ## This is a friction coefficient. In the extreme-parkour play.py, they set randomize_friction to True always.  ## TODO: Needs to be set in environment as well
+            motor_strength[0] - 1,  ## This is the lower range of randomized P gain. ## TODO: Also set in robot's PD controller, and not sure why it's -1. Should think about how to turn off, maybe set it to 1. The -1 might be to try to bring it close to 0, since nominal value for motor_strngth is 1.
+            motor_strength[1] - 1
+        ]
+
+        concatenated = np.concatenate(obs_list)
+        assert concatenated.shape[0] == self.n_priv_latent, "Privileged latent observation is not the right shape"
+
+        return concatenated
+    
+    ## TODO: Add heights, add obs_history_buf
+
 
     def get_full_observation(self):
         obs_dict = dict(

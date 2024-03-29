@@ -109,7 +109,7 @@ def play(args):
     # prepare environment
     env: LeggedRobot
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
-    obs = env.get_observations()  ## Mateo: TODO: Check dimensionality of observations
+    obs = env.get_observations()  ## Mateo: TODO: Check dimensionality of observations. Answer: It's a [16, 753] dimensional array, env_cfg.env.num_envs is 16, so [num_envs, 753]. 
 
     if args.web:
         web_viewer.setup(env)
@@ -139,7 +139,7 @@ def play(args):
             if env.cfg.depth.use_camera:  ## Mateo: TODO: Check that this is true
                 if infos["depth"] is not None:
                     depth_latent = torch.ones((env_cfg.env.num_envs, 32), device=env.device)  ## Mateo: TODO: The depth latent is always an array of ones here. This makes no sense. Check what this is supposed to be
-                    actions, depth_latent = policy_jit(obs.detach(), True, infos["depth"], depth_latent)  ## Mateo: TODO: Check what type of network this is, and what are the four inputs that it allows. 
+                    actions, depth_latent = policy_jit(obs.detach(), True, infos["depth"], depth_latent)  ## Mateo: TODO: Check what type of network this is, and what are the four inputs that it allows. Also, why does it return the depth latent? 
                 else:
                     depth_buffer = torch.ones((env_cfg.env.num_envs, 58, 87), device=env.device)  ## Mateo: This is saying that if there is no depth image in the observation, you pass a 2D array of size (58, 87) into the network. Notably, the second argument is False instead of True, and the depth_latent that doesn't seem like it's actually set anywhere before this, so SHOULD break.
                     actions, depth_latent = policy_jit(obs.detach(), False, depth_buffer, depth_latent)
