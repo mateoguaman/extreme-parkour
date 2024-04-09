@@ -14,6 +14,8 @@ from robot_deployment.robots.motors import MotorCommand
 from robot_deployment.robots import a1
 from robot_deployment.robots import a1_robot
 
+from collections import deque
+
 
 class LocomotionGymEnv(gym.Env):
     """The gym environment for the locomotion tasks."""
@@ -29,7 +31,8 @@ class LocomotionGymEnv(gym.Env):
         sensors: Tuple[str, ...],
         obs_scales: NormalizationConfig.NormalizationObsScalesConfig,
         command_ranges: CommandsConfig.CommandRangesConfig,
-        history_length: int = 1
+        history_length: int = 1,
+        clip_observatons: float = 100
     ):
         # set instance variables from arguments
         self.config = config
@@ -43,6 +46,7 @@ class LocomotionGymEnv(gym.Env):
         self.env_time_step = self.config.timestep * self.config.action_repeat
         ## Mateo: Need to put this into a config eventually
         self.history_length = history_length  ## Should be 10
+        self.clip_observations = clip_observatons
         self.n_proprio = 53
         self.n_priv_explicit = 9
         self.n_priv_latent = 29
@@ -90,22 +94,50 @@ class LocomotionGymEnv(gym.Env):
         if self.config.render.show_gui and not self.use_real_robot:
             self.pybullet_client.configureDebugVisualizer(self.pybullet_client.COV_ENABLE_RENDERING, 1)
         ## Mateo: TODO: need to populate this proprioceptive history 
-        self.proprio_history = np.zeros((self.history_length, self.n_proprio))
+        self.proprio_history = deque(np.stack([self.get_proprioceptive_observation()]*self.history_length, axis=0), maxlen=self.history_length)
         self.current_time = time.time()
         # return self.get_observation(), self.get_full_observation()
         return self.get_observation_parkour(), self.get_full_observation()
+    
+    def fake_action_sine(timestep, leg_idxs):
+        frequency = 0.05
+        amplitude = 0.25
+        phase = 0
+        actions = np.zeros((12,))
+        actions[leg_idxs] = amplitude * np.sin(frequency*timestep + phase)
+        actions[leg_idxs+1] = 1*amplitude * np.sin(frequency*timestep + phase)
+        return actions
+
+    def process_action(self, action):
+        ## TODO: 
+        action = self.reindex(action)
+        action_limit = self.config.clip_actions / self.config.action_scale
+        action = np.clip(action, -action_limit, action_limit)
+        action *= self.config.action_scale
+        
+        ## For testing purposes:
+        # actions = fake_action_sine(t, np.array([2, 5, 8, 11]))
+        # actions = 0 # * fake_action_sine(t, 1)
+
+        action = action + self.default_motor_angles
+        
+        return action
+    
     def step(self, action):
         """Step forward the environment, given the action.
 
         action: 12-dimensional NumPy array of desired motor angles
         """
+        print(f"Input action: {action}")
         clipped_action = np.clip(
             action,
             self.robot.motor_group.min_positions,
             self.robot.motor_group.max_positions
         )
+        processed_action = self.process_action(clipped_action)
+        # print(f"Processed action: {processed_action}")
         motor_action = MotorCommand(
-            desired_position=clipped_action,
+            desired_position=processed_action,
             kp=self.robot.motor_group.kps,
             kd=self.robot.motor_group.kds
         )
@@ -127,10 +159,21 @@ class LocomotionGymEnv(gym.Env):
             )
 
         terminated = not self.is_safe
-        self.last_action = clipped_action
+        self.last_action = self.reindex(action) #clipped_action
         self.timesteps += 1
         # return self.get_observation(), 0, terminated, False, self.get_full_observation()
-        return self.get_observation_parkour(), 0, terminated, False, self.get_full_observation()
+        self.proprio_history.append(self.get_proprioceptive_observation())
+        observation = self.get_observation_parkour()
+        # import ipdb;ipdb.set_trace()
+        ## TODO: return depth as part of observations
+        raw_depth = self.robot.raw_depth_image
+        depth = self.robot.processed_depth_image
+        # import matplotlib.pyplot as plt
+        # plt.imshow(raw_depth)
+        # plt.show()
+        # plt.imshow(depth)
+        # plt.show()
+        return observation, 0, terminated, False, self.get_full_observation()
 
     def render(self):
         view_matrix = self.pybullet_client.computeViewMatrixFromYawPitchRoll(
@@ -206,15 +249,27 @@ class LocomotionGymEnv(gym.Env):
     
     def get_observation_parkour(self):
         ## TODO: Change so that it calls get_proprioceptive_history(), get_privileged_explicit_observation(), etc. and concatenate everything here to get a 753-dimensional observation
-        return None
+        obs_list = [
+            self.get_proprioceptive_observation(),
+            self.get_privileged_explicit_observation(),
+            self.get_privileged_latent_observation(),
+            self.get_heights(),
+            self.get_proprioceptive_history()
+        ]
+        concatenated = np.concatenate(obs_list)
+
+        clip_obs = self.clip_observations
+        concatenated = np.clip(concatenated, -clip_obs, clip_obs)
+
+        return concatenated  ## TODO: add shape assertion
     
     def get_proprioceptive_observation(self):
         obs_list = []
         for sensor in self.sensors:
             if sensor == "base_ang_vel":
-                obs_list.append(self.robot.base_angular_velocity_in_base_frame * self.obs_scales.ang_vel)  ## TODO: Verify scale
+                obs_list.append(self.robot.base_angular_velocity_in_base_frame * self.obs_scales.ang_vel)
             elif sensor == "roll_pitch":
-                obs_list.append(self.robot.base_orientation_rpy[0:2])  ## TODO: Verify that [0:2] are actually roll and pitch; TODO: Verify scale
+                obs_list.append(self.robot.base_orientation_rpy[0:2])  ## TODO: Verify that [0:2] are actually roll and pitch;
             elif sensor == "zerod_delta_yaw":
                 zerod_delta_yaw = np.zeros((1, ))
                 obs_list.append(zerod_delta_yaw)
@@ -227,24 +282,24 @@ class LocomotionGymEnv(gym.Env):
             elif sensor == "zerod_lin_vel_x_lin_vel_y":
                 zerod_lin_vel_x_lin_vel_y = np.zeros((2,))  
                 obs_list.append(zerod_lin_vel_x_lin_vel_y)
-            elif sensor == "lin_vel_x":
-                lin_vel_x = self.robot.base_velocity_in_base_frame[[0]]  ## TODO: Check this value, starts with pi/2
+            elif sensor == "lin_vel_x_command":
+                lin_vel_x = 0.8*np.ones((1,)) #0.5  ## TODO: Change this to be input from joystick
                 obs_list.append(lin_vel_x)  ## TODO: Verify this
             elif sensor == "not_env_17":
-                not_env_17 = np.ones((1,))
+                not_env_17 = np.ones((1,))  ## TODO: Should be 0 in general, but should come from env terrain parameters 
                 obs_list.append(not_env_17)
             elif sensor == "is_env_17":
-                is_env_17 = np.ones((1,))
+                is_env_17 = np.zeros((1,))  ## TODO: Should be 0 in general, but should come from env terrain parameters 
                 obs_list.append(is_env_17)
             elif sensor == "motor_pos":
-                motor_pos_scaled = (self.robot.motor_angles - self.default_motor_angles) * self.obs_scales.dof_pos  ## TODO: Verify scale 
+                motor_pos_scaled = (self.robot.motor_angles - self.default_motor_angles) * self.obs_scales.dof_pos 
                 obs_list.append(self.reindex(motor_pos_scaled))  ## TODO: Verify reindex
             elif sensor == "motor_vel":
-                motor_vel_scaled = self.robot.motor_velocities * self.obs_scales.dof_vel  ## TODO: Check scale
+                motor_vel_scaled = self.robot.motor_velocities * self.obs_scales.dof_vel
                 obs_list.append(self.reindex(motor_vel_scaled))  ## TODO: Verify reindex
             elif sensor == "last_action":
                 last_action = self.last_action
-                double_reindexed = self.reindex(self.reindex(last_action))
+                double_reindexed = self.reindex(last_action)
                 obs_list.append((double_reindexed))
             elif sensor == "contact_filter":
                 contact = self.robot.foot_contacts
@@ -252,7 +307,6 @@ class LocomotionGymEnv(gym.Env):
                 contact_filter = np.logical_or(contact, last_contacts).astype(float)
                 shifted_contact_filter = contact_filter - 0.5  ## TODO: Not sure why 0.5
                 obs_list.append(shifted_contact_filter)
-    
         concatenated = np.concatenate(obs_list)
         assert concatenated.shape[0] == self.n_proprio, "Proprioceptive observation is not the right shape"
         
@@ -271,14 +325,22 @@ class LocomotionGymEnv(gym.Env):
         return concatenated
     
     def get_privileged_latent_observation(self):
+        ## Since we are only using this environment for deployment, it may make sense to just output zeros everywhere. TODO: Once this is working, come back and zero things out to see what happens. 
         motor_strength_range = [0.8, 1.2]
         motor_strength = (motor_strength_range[1] - motor_strength_range[0]) * np.random.rand(2, 12) + motor_strength_range[0]
         
+        # obs_list = [
+        #     np.zeros(4,),  ## This is "mass params", which corresponds to [added_randomized_mass, added_center_of_mass_pos_x_shift, added_center_of_mass_pos_y_shift, added_center_of_mass_pos_z_shift]. Zero'd out in play.py in extreme-parkour since rand_mass and rand_com are False.
+        #     np.random.rand(1),  ## This is a friction coefficient. In the extreme-parkour play.py, they set randomize_friction to True always.  ## TODO: Needs to be set in environment as well
+        #     motor_strength[0] - 1,  ## This is the lower range of randomized P gain. ## TODO: Also set in robot's PD controller, and not sure why it's -1. Should think about how to turn off, maybe set it to 1. The -1 might be to try to bring it close to 0, since nominal value for motor_strngth is 1.
+        #     motor_strength[1] - 1
+        # ]
+
         obs_list = [
             np.zeros(4,),  ## This is "mass params", which corresponds to [added_randomized_mass, added_center_of_mass_pos_x_shift, added_center_of_mass_pos_y_shift, added_center_of_mass_pos_z_shift]. Zero'd out in play.py in extreme-parkour since rand_mass and rand_com are False.
-            np.random.rand(1),  ## This is a friction coefficient. In the extreme-parkour play.py, they set randomize_friction to True always.  ## TODO: Needs to be set in environment as well
-            motor_strength[0] - 1,  ## This is the lower range of randomized P gain. ## TODO: Also set in robot's PD controller, and not sure why it's -1. Should think about how to turn off, maybe set it to 1. The -1 might be to try to bring it close to 0, since nominal value for motor_strngth is 1.
-            motor_strength[1] - 1
+            np.zeros(1,),  ## This is a friction coefficient. In the extreme-parkour play.py, they set randomize_friction to True always.  ## TODO: Needs to be set in environment as well
+            np.zeros(12,),  ## This is the lower range of randomized P gain. ## TODO: Also set in robot's PD controller, and not sure why it's -1. Should think about how to turn off, maybe set it to 1. The -1 might be to try to bring it close to 0, since nominal value for motor_strngth is 1.
+            np.zeros(12,)
         ]
 
         concatenated = np.concatenate(obs_list)
@@ -286,9 +348,18 @@ class LocomotionGymEnv(gym.Env):
 
         return concatenated
     
-    ## TODO: Add heights, add obs_history_buf
-
-
+    def get_heights(self):
+        ## Not sure why this are needed when running the policy that uses depth, and unclear how to get heights from PyBullet or on the real robot (would require lidar). This should not be necessary for deployment, so for now I'm just going to output zeros.
+        return np.zeros(self.n_scan)  ## TODO: add shape assertion
+    
+    def get_proprioceptive_history(self):
+        history_array = np.array(self.proprio_history).flatten()
+        return history_array  ## TODO: add shape assertion
+    
+    def get_depth_image(self):
+        return self.robot.processed_depth_image
+    
+    
     def get_full_observation(self):
         obs_dict = dict(
             base_angular_velocity_in_base_frame=self.robot.base_angular_velocity_in_base_frame,

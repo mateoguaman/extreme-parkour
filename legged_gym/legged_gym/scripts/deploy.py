@@ -12,7 +12,7 @@ from omegaconf import OmegaConf, MISSING
 from configs.hydra import ExperimentHydraConfig
 from configs.definitions import (EnvConfig, TaskConfig, TrainConfig, ObservationConfig,
                                  SimConfig, RunnerConfig, TerrainConfig, NormalizationConfig,
-                                 CommandsConfig)
+                                 CommandsConfig, ControlConfig)
 from configs.definitions import DeploymentConfig
 from configs.overrides.domain_rand import NoDomainRandConfig
 from configs.overrides.noise import NoNoiseConfig
@@ -23,6 +23,7 @@ from legged_gym.utils.helpers import update_cfg_from_args
 from robot_deployment.envs.locomotion_gym_env import LocomotionGymEnv
 import torch
 import os
+import numpy as np
 
 # from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.helpers import get_args, class_to_dict, empty_cfg
@@ -37,40 +38,40 @@ from rsl_rl.runners.deploy_on_policy_runner import DeployOnPolicyRunner
 # OmegaConf.register_new_resolver("not", lambda b: not b)
 # OmegaConf.register_new_resolver("compute_timestep", lambda dt, decimation, action_repeat: dt * decimation / action_repeat)
 
-# INIT_JOINT_ANGLES = { # = target angles [rad] when action = 0.0
-#             'FL_hip_joint': 0.1,   # [rad]
-#             'RL_hip_joint': 0.1,   # [rad]
-#             'FR_hip_joint': -0.1 ,  # [rad]
-#             'RR_hip_joint': -0.1,   # [rad]
+INIT_JOINT_ANGLES = { # = target angles [rad] when action = 0.0
+            'FL_hip_joint': 0.1,   # [rad]
+            'RL_hip_joint': 0.1,   # [rad]
+            'FR_hip_joint': -0.1 ,  # [rad]
+            'RR_hip_joint': -0.1,   # [rad]
 
-#             'FL_thigh_joint': 0.8,     # [rad]
-#             'RL_thigh_joint': 1.,   # [rad]
-#             'FR_thigh_joint': 0.8,     # [rad]
-#             'RR_thigh_joint': 1.,   # [rad]
+            'FL_thigh_joint': 0.8,     # [rad]
+            'RL_thigh_joint': 1.,   # [rad]
+            'FR_thigh_joint': 0.8,     # [rad]
+            'RR_thigh_joint': 1.,   # [rad]
 
-#             'FL_calf_joint': -1.5,   # [rad]
-#             'RL_calf_joint': -1.5,    # [rad]
-#             'FR_calf_joint': -1.5,  # [rad]
-#             'RR_calf_joint': -1.5,    # [rad]
-#         }  ## TODO: Where did these come from?
+            'FL_calf_joint': -1.5,   # [rad]
+            'RL_calf_joint': -1.5,    # [rad]
+            'FR_calf_joint': -1.5,  # [rad]
+            'RR_calf_joint': -1.5,    # [rad]
+        }  ## These are the Extreme-Parkour starting angles
 
-INIT_JOINT_ANGLES = {
-    "1_FR_hip_joint": 0.,
-    "1_FR_thigh_joint": 0.9,
-    "1_FR_calf_joint": -1.8,
+# INIT_JOINT_ANGLES = {
+#     "1_FR_hip_joint": 0.,
+#     "1_FR_thigh_joint": 0.9,
+#     "1_FR_calf_joint": -1.8,
 
-    "2_FL_hip_joint": 0.,
-    "2_FL_thigh_joint": 0.9,
-    "2_FL_calf_joint": -1.8,
+#     "2_FL_hip_joint": 0.,
+#     "2_FL_thigh_joint": 0.9,
+#     "2_FL_calf_joint": -1.8,
 
-    "3_RR_hip_joint": 0.,
-    "3_RR_thigh_joint": 0.9,
-    "3_RR_calf_joint": -1.8,
+#     "3_RR_hip_joint": 0.,
+#     "3_RR_thigh_joint": 0.9,
+#     "3_RR_calf_joint": -1.8,
 
-    "4_RL_hip_joint": 0.,
-    "4_RL_thigh_joint": 0.9,
-    "4_RL_calf_joint": -1.8
-}
+#     "4_RL_hip_joint": 0.,
+#     "4_RL_thigh_joint": 0.9,
+#     "4_RL_calf_joint": -1.8
+# }
 
 @dataclass
 class DeployScriptConfig:
@@ -78,9 +79,9 @@ class DeployScriptConfig:
     # logging_root: str = from_repo_root("../experiment_logs")
     # export_policy: bool = True
     use_joystick: bool = True
-    # episode_length_s: float = 200.
+    episode_length_s: float = 200.
     # checkpoint: int = -1
-    device: str = "cpu"
+    device: str = "cuda"
     use_real_robot: bool = False
 
     # hydra: ExperimentHydraConfig = ExperimentHydraConfig()
@@ -97,14 +98,14 @@ class DeployScriptConfig:
                             "delta_yaw",
                             "delta_next_yaw",
                             "zerod_lin_vel_x_lin_vel_y",
-                            "lin_vel_x",
+                            "lin_vel_x_command",
                             "not_env_17",
                             "is_env_17",
                             "motor_pos",
                             "motor_vel",
                             "last_action",
                             "contact_filter"),
-            history_steps=1,
+            history_steps=10,
         ),
         normalization = empty_cfg(NormalizationConfig)(
             obs_scales = empty_cfg(NormalizationConfig.NormalizationObsScalesConfig)(
@@ -158,12 +159,14 @@ class DeployScriptConfig:
             show_gui=True #"${not: ${use_real_robot}}"
         ),
         # timestep="${compute_timestep: ${task.sim.dt}, ${task.control.decimation}, ${deployment.action_repeat}}",
-        timestep=0.002, #TODO: should also try 0.0004 w dt=0.001. their dt 0.005, decimation=4, unknown action_repeat (we assume it's 10 form our code), and the formuoli we use is dt*decimation/action_repeat
+        timestep=0.005, #0.002, #TODO: should also try 0.0004 w dt=0.001. their dt 0.005, decimation=4, unknown action_repeat (we assume it's 10 form our code), and the formuoli we use is dt*decimation/action_repeat
+        action_repeat=4,
         init_position=(0.0, 0.0, 0.42),
         init_joint_angles=INIT_JOINT_ANGLES,
         stiffness=dict(joint=40.),
         damping=dict(joint=1.),
-        action_scale=0.25
+        action_scale= 0.25,  ## TODO: Why are these parameters here but also on task.control?
+        clip_actions = 1.2
     )
 
 cs = ConfigStore.instance()
@@ -176,6 +179,10 @@ def get_load_path(root, load_run=-1, checkpoint=-1, model_name_include="model"):
         model = models[-1]
         checkpoint = model.split("_")[-1].split(".")[0]
     return model, checkpoint
+
+def process_observation(obs):
+    ## TODO: splits up the observation array into proprioceptive info, explicit latent, depth image, history, etc.
+    pass
 
 
 @hydra.main(version_base=None, config_name="config")
@@ -233,7 +240,6 @@ def main(cfg: DeployScriptConfig):
                             "./", 
                             init_wandb=True,
                             device=args.rl_device)
-    
     # load previously trained model
     print(log_pth)
     print(train_cfg.runner.load_run)
@@ -252,7 +258,9 @@ def main(cfg: DeployScriptConfig):
         policy_jit = torch.jit.load(path, map_location=cfg.device)
     else:
         policy = runner.get_inference_policy(device=cfg.device)
-
+        estimator = runner.get_estimator_inference_policy(device=cfg.device)
+        assert env_cfg.depth.use_camera, "Need env_cfg.depth.use_camera to be True"
+        depth_encoder = runner.get_depth_encoder_inference_policy(device=cfg.device)
     
     # ppo_runner, train_cfg = task_registry.make_alg_runner(log_root = log_pth, env_cfg=env_cfg, name=args.task, args=args)
     # sim_params = 
@@ -282,15 +290,17 @@ def main(cfg: DeployScriptConfig):
         cfg.task.observation.sensors,
         cfg.task.normalization.obs_scales,
         cfg.task.commands.ranges,
-        cfg.task.observation.history_steps
+        cfg.task.observation.history_steps,
+        cfg.task.normalization.clip_observations
     )
 
     obs, info = deploy_env.reset()
     for _ in range(1):
         obs, *_, info = deploy_env.step(deploy_env.default_motor_angles)
 
-    import ipdb;ipdb.set_trace()
-    obs_buf = ObservationBuffer(1, env_cfg.num_observations, cfg.task.observation.history_steps, runner.device) 
+    depth_image = torch.from_numpy(deploy_env.get_depth_image()).unsqueeze(0).to(cfg.device)
+
+    # obs_buf = ObservationBuffer(1, env_cfg.num_observations, cfg.task.observation.history_steps, runner.device) 
 
     all_actions = []
     all_infos = None
@@ -298,26 +308,52 @@ def main(cfg: DeployScriptConfig):
     log.info(f"7. Running the inference loop.")
     for t in range(int(cfg.episode_length_s / deploy_env.robot.control_timestep)):
         # Form observation for policy.
-        obs = torch.tensor(obs, device=runner.device).float()
-        if t == 0:
-            obs_buf.reset([0], obs) 
-            all_infos = {k: [v.copy()] for k, v in info.items()}
-        else:
-            obs_buf.insert(obs)
-            for k, v in info.items():
-                all_infos[k].append(v.copy())
+        obs = torch.tensor(obs, device=runner.device).float().unsqueeze(0)
+        # if t == 0:
+        #     obs_buf.reset([0], obs) 
+        #     all_infos = {k: [v.copy()] for k, v in info.items()}
+        # else:
+        #     obs_buf.insert(obs)
+        #     for k, v in info.items():
+        #         all_infos[k].append(v.copy())
 
-        policy_obs = obs_buf.get_obs_vec(range(cfg.task.observation.history_steps))
+        ## New way of getting observations and actions following extreme-parkour
+        # import matplotlib.pyplot as plt
+        # import ipdb;ipdb.set_trace()
+        depth_image = torch.from_numpy(deploy_env.get_depth_image()).unsqueeze(0).to(cfg.device)  ## TODO: seems like Extreme Parkour doesn't get an image every frame, need to figure out the right frequency
+        # plt.imshow(deploy_env.get_depth_image())
+        # plt.show()
+        obs_student = obs[:, :env_cfg.env.n_proprio].clone()
+        obs_student[:, 6:8] = 0
+        depth_latent_and_yaw = depth_encoder(depth_image, obs_student)
+        depth_latent = depth_latent_and_yaw[:, :-2]
+        yaw = depth_latent_and_yaw[:, -2:]
+        obs[:, 6:8] = 1.5*yaw
+        actions = runner.alg.depth_actor(obs.detach(), hist_encoding=True, scandots_latent=depth_latent)
+        actions = actions.squeeze().detach().cpu().numpy()
 
-        # Evaluate policy and act.
-        actions = policy(policy_obs.detach()).detach().cpu().numpy().squeeze()
-        actions = cfg.task.control.action_scale*actions + deploy_env.default_motor_angles
+        # # policy_obs = obs_buf.get_obs_vec(range(cfg.task.observation.history_steps))
+
+        # # Evaluate policy and act.
+        # # actions = policy(policy_obs.detach()).detach().cpu().numpy().squeeze()
+        # # actions = cfg.task.control.action_scale*actions + deploy_env.default_motor_angles
+        # ## Action pre-processing
+        # actions = deploy_env.reindex(actions)
+        # actions_limit = cfg.task.normalization.clip_actions / cfg.deployment.action_scale
+        # actions = np.clip(actions, -actions_limit, actions_limit)
+        # actions *= cfg.deployment.action_scale
+        
+        # ## For testing purposes:
+        # # actions = fake_action_sine(t, np.array([2, 5, 8, 11]))
+        # # actions = 0 * fake_action_sine(t, 1)
+
+        # actions = actions + deploy_env.default_motor_angles
         all_actions.append(actions)
         obs, _, terminated, _, info = deploy_env.step(actions)
 
         if terminated:
             log.warning("Unsafe, terminating!")
-            break
+            # break
 
     log.info("8. Exit Cleanly")
     # TODO: check if target simulator (pybullet or other) has exit logic

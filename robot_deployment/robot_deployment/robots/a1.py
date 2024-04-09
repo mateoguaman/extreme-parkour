@@ -14,13 +14,13 @@ class A1(Robot):
       self,
       pybullet_client: BulletClient,
       sim_conf: DeploymentConfig,
-      urdf_path: str = "a1.urdf",
-      base_joint_names: Tuple[str, ...] = (),
-      foot_joint_names: Tuple[str, ...] = (
-          "1_FR_foot_fixed",
-          "2_FL_foot_fixed",
-          "3_RR_foot_fixed",
-          "4_RL_foot_fixed"
+      urdf_path: str = "a1_extreme_parkour.urdf",  ## Changed by Mateo
+      base_joint_names: Tuple[str, ...] = (),  ## Unsure why this is empty
+      foot_joint_names: Tuple[str, ...] = (  ## Also changed by Mateo
+          "FR_foot_fixed",
+          "FL_foot_fixed",
+          "RR_foot_fixed",
+          "RL_foot_fixed"
       ),
       motor_control_mode: MotorControlMode = MotorControlMode.POSITION,
       mpc_body_height: float = 0.3,
@@ -32,10 +32,10 @@ class A1(Robot):
         Initializes a tuple with a single MotorGroup containing 12 MotoroModels.
         Each MotorModel is by default configured for the parameters of the A1.
         """
-    motor_names = ("1_FR_hip_joint", "1_FR_thigh_joint", "1_FR_calf_joint",
-                   "2_FL_hip_joint", "2_FL_thigh_joint", "2_FL_calf_joint",
-                   "3_RR_hip_joint", "3_RR_thigh_joint", "3_RR_calf_joint",
-                   "4_RL_hip_joint", "4_RL_thigh_joint", "4_RL_calf_joint")
+    motor_names = ("FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                   "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                   "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+                   "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint")
     self._mpc_body_height = mpc_body_height
     self._mpc_body_mass = mpc_body_mass
     self._mpc_body_inertia = mpc_body_inertia

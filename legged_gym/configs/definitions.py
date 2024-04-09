@@ -356,6 +356,7 @@ class DeploymentConfig:
     stiffness: Dict[str, float] = field(default_factory=lambda: dict(joint=50.)) # [N*m/rad]
     damping: Dict[str, float] = field(default_factory=lambda: dict(joint=0.5)) # [N*m*s/rad]
     action_scale: float = 1.
+    clip_actions: float = 100.
     on_rack: bool = False
 
     @dataclass

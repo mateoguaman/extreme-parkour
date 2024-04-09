@@ -109,7 +109,7 @@ def play(args):
     # prepare environment
     env: LeggedRobot
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
-    obs = env.get_observations()  ## Mateo: TODO: Check dimensionality of observations. Answer: It's a [16, 753] dimensional array, env_cfg.env.num_envs is 16, so [num_envs, 753]. 
+    obs = env.get_observations()  ## Mateo: TODO: Check dimensionality of observations. Answer: It's a [16, 753] dimensional array, env_cfg.env.num_envs is 16, so [num_envs, 753]. Inside it, we have
 
     if args.web:
         web_viewer.setup(env)

@@ -4,6 +4,7 @@ from typing import Any
 from typing import Optional
 from typing import Tuple
 from pybullet_utils.bullet_client import BulletClient
+import cv2
 
 from configs.definitions import DeploymentConfig
 from robot_deployment.robots import kinematics
@@ -11,6 +12,11 @@ from robot_deployment.robots.motors import MotorCommand
 from robot_deployment.robots.motors import MotorControlMode
 from robot_deployment.robots.motors import MotorGroup
 from robot_deployment.robots.motors import MotorModel
+
+_PYBULLET_DEFAULT_PROJECTION_MATRIX = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                       0.0, 0.0, -1.0000200271606445, -1.0,
+                                       0.0, 0.0, -0.02000020071864128, 0.0)
+_DEFAULT_TARGET_DISTANCE = 10
 
 class Robot:
   """Robot Base
@@ -322,6 +328,88 @@ class Robot:
       jac = self.compute_foot_jacobian(i)
       foot_velocities.append(jac.dot(self.motor_velocities[3*i:3*(i+1)]))
     return np.stack(foot_velocities)
+  
+  @property
+  def processed_depth_image(self):
+    raw_depth_image = self.raw_depth_image
+    ## Crop image to "remove dead pixels" (not sure why this is necessary)
+    cropped_depth_image = raw_depth_image[:-2, 4:-4]
+
+    ## Clip to range [0, 2]
+    clipped_depth_image = np.clip(cropped_depth_image, 0, 2)
+
+    ## Resize with bicubic interpolation
+    resized_depth_image = cv2.resize(clipped_depth_image, (87, 58), interpolation=cv2.INTER_CUBIC)  ## Check if this is comparable to torchvision Resize
+
+    ## Normalize depth image
+    normalized_depth_image = (resized_depth_image)/(2) - 0.5
+
+    processed_depth_image = normalized_depth_image
+    return processed_depth_image
+
+  @property
+  def raw_depth_image(self):
+    width = 106
+    height = 60
+    fov = 87
+    aspect = width/height
+    near = 0.01
+    far = 100 #2000000 #1000
+
+    camera_pos_wrt_body = np.array([0.27, 0, 0.03])
+    
+    projection_matrix = self._pybullet_client.computeProjectionMatrixFOV(fov, aspect, near, far)
+    com_p, com_o, _, _, _, _ = self._pybullet_client.getLinkState(self.quadruped, 0, computeForwardKinematics=True) ## camera_box index is 0
+
+    img = self.create_camera_image(self._pybullet_client,
+                                   com_p + camera_pos_wrt_body,
+                                   com_o,
+                                   (width, height),
+                                   projection_matrix)
+                                  #  _PYBULLET_DEFAULT_PROJECTION_MATRIX)
+
+    depth = img[3]
+    depth_image_size = (width, height)
+    # zbuffer = np.array(depth).reshape(depth_image_size)
+    zbuffer = np.array(depth)
+    depth = (far + near - (2. * zbuffer - 1.) * (far - near))
+    depth = (2. * near * far) / depth
+
+    return depth
+  
+
+  def create_camera_image(self, pybullet_client,
+                        camera_position,
+                        camera_orientation,
+                        resolution,
+                        projection_mat,
+                        egl_render=False):
+    """Returns synthetic camera image from pybullet."""
+    orientation_mat = pybullet_client.getMatrixFromQuaternion(camera_orientation)
+
+    # The first column in the orientation matrix.
+    forward_vec = orientation_mat[::3]
+    target_distance = _DEFAULT_TARGET_DISTANCE
+    camera_target = [
+        camera_position[0] + forward_vec[0] * target_distance,
+        camera_position[1] + forward_vec[1] * target_distance,
+        camera_position[2] + forward_vec[2] * target_distance
+    ]
+
+    # The third column in the orientation matrix. We assume camera up vector is
+    # always [0, 0, 1] in its local frame.
+    up_vec = orientation_mat[2::3]
+
+    view_mat = pybullet_client.computeViewMatrix(camera_position, camera_target,
+                                                up_vec)
+    # import ipdb;ipdb.set_trace()
+    renderer = (pybullet_client.ER_BULLET_HARDWARE_OPENGL
+                if egl_render else pybullet_client.ER_TINY_RENDERER)
+    return pybullet_client.getCameraImage(resolution[0],
+                                          resolution[1],
+                                          viewMatrix=view_mat,
+                                          projectionMatrix=projection_mat,
+                                          renderer=renderer)
 
   def compute_foot_jacobian(self, leg_id):
     """Compute the Jacobian for a given leg."""
